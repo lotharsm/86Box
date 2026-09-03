@@ -54,4 +54,10 @@ void osd_core_remove_log_hook(void);
 /* Draw OSD indicators */
 void osd_core_draw_indicators(void);
 
+/* Show a non-blocking message that expires after the given seconds. */
+void osd_core_show_message(const char *text, float seconds);
+
+/* True while a message still needs drawing, even with the OSD closed. */
+bool osd_core_message_active(void);
+
 #endif /* OSD_CORE_HPP */

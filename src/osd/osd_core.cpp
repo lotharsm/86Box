@@ -102,6 +102,21 @@ static int         log_ring_count = 0;   /* entries populated */
 static std::mutex  log_mutex;
 static bool        log_scroll_pending = false;
 
+/* ------------------------------------------------------------------ */
+/*  Transient message                                                  */
+/* ------------------------------------------------------------------ */
+static char       message_text[OSD_LOG_LINE_LEN];
+static float      message_left = 0.0f; /* seconds remaining, set by osd_core_show_message() */
+static std::mutex message_mutex;
+
+bool
+osd_core_message_active(void)
+{
+    std::lock_guard<std::mutex> lock(message_mutex);
+
+    return message_left > 0.0f;
+}
+
 static void show_main_menu(void);
 static bool focused_button(const char *label, bool focused);
 
@@ -750,9 +765,13 @@ void osd_core_set_title(const char *title)
     osd_title[sizeof(osd_title) - 1] = '\0';
 }
 
+/* TEST CASE: set on invoke, consumed by osd_core_build_ui(). */
+static bool message_test_pending = false;
+
 void osd_core_reset_to_menu(void)
 {
     show_main_menu();
+    message_test_pending = true;
 }
 
 bool osd_core_escape(void)
@@ -765,6 +784,12 @@ bool osd_core_escape(void)
 
 bool osd_core_build_ui(void)
 {
+    /* TEST CASE: show a message when the OSD is invoked, menu stays up. */
+    if (message_test_pending) {
+        message_test_pending = false;
+        osd_core_show_message("initial OSD message implementation test", 30.0f);
+    }
+
     switch (current_view) {
         case VIEW_MENU:      return draw_menu();
         case VIEW_LOG:       return draw_log();
@@ -788,6 +813,47 @@ void osd_core_draw_indicators(void)
         ImGui::End();
     }
 #endif
+
+    char  text[OSD_LOG_LINE_LEN];
+    float left;
+
+    {
+        std::lock_guard<std::mutex> lock(message_mutex);
+
+        if (message_left <= 0.0f)
+            return;
+
+        message_left -= ImGui::GetIO().DeltaTime;
+        left = message_left;
+        snprintf(text, sizeof(text), "%s", message_text);
+    }
+
+    if (left <= 0.0f)
+        return;
+
+    /* Click-through overlay, so the emulator keeps all input. */
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration;
+    flags |= ImGuiWindowFlags_NoInputs;
+    flags |= ImGuiWindowFlags_NoNav;
+    flags |= ImGuiWindowFlags_NoFocusOnAppearing;
+    flags |= ImGuiWindowFlags_NoSavedSettings;
+    flags |= ImGuiWindowFlags_AlwaysAutoResize;
+
+    ImGui::SetNextWindowPos(ImVec2(osd_core_scaled(8.0f), osd_core_scaled(8.0f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, std::min(1.0f, left)); /* fade out over the last second */
+    if (ImGui::Begin("##osd_message", nullptr, flags))
+        ImGui::TextUnformatted(text);
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
+void
+osd_core_show_message(const char *text, float seconds)
+{
+    std::lock_guard<std::mutex> lock(message_mutex);
+
+    snprintf(message_text, sizeof(message_text), "%s", (text != nullptr) ? text : "");
+    message_left = (message_text[0] != '\0') ? seconds : 0.0f;
 }
 
 void osd_core_install_log_hook(void)
